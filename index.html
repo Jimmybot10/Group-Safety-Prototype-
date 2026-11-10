@@ -47,6 +47,9 @@ button:disabled{opacity:.55;cursor:default}
 .chip{display:inline-block;font-size:13px;font-weight:700;padding:3px 10px;border-radius:999px}
 .chip.on{background:var(--ok-soft);color:var(--ok)}
 .chip.off{background:#eceff1;color:var(--muted)}
+.chip.wait{background:var(--warn-soft);color:var(--warn)}
+#shareStatus.blocked{color:var(--bad);font-weight:600}
+#shareBtn.stop{background:#fff;color:var(--bad);border-color:#efc4bf}
 .members{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .member{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fff}
 .dot{width:14px;height:14px;border-radius:50%;margin-top:4px;flex:none;border:2px solid #fff;box-shadow:0 0 0 1px var(--line)}
@@ -112,6 +115,14 @@ footer{font-size:13px;color:var(--muted);text-align:center;padding:8px 0 24px}
 
     <div id="map" role="region" aria-label="Group map"></div>
 
+    <div class="card" id="shareCard">
+      <div class="head">
+        <h2 style="margin:0">Your location</h2>
+        <button class="primary" id="shareBtn" type="button">Share my location</button>
+      </div>
+      <p id="shareStatus" style="margin:10px 0 0">Off. Nobody in the group can see where you are.</p>
+    </div>
+
     <div class="card" id="tripCard">
       <div id="tripIdle">
         <h2>Start a trip</h2>
@@ -119,8 +130,8 @@ footer{font-size:13px;color:var(--muted);text-align:center;padding:8px 0 24px}
         <input id="tripDest" type="text" maxlength="60" placeholder="e.g. Home">
         <label for="tripEta">Expected arrival</label>
         <input id="tripEta" type="time">
-        <div class="row" style="margin-top:14px"><button class="primary" id="startTripBtn" type="button">Start trip and share location</button></div>
-        <p class="muted" style="margin-top:10px">If you haven't tapped "I'm home" by your arrival time, everyone in the group sees an alert.</p>
+        <div class="row" style="margin-top:14px"><button class="primary" id="startTripBtn" type="button">Start trip</button></div>
+        <p class="muted" style="margin-top:10px">Starting a trip also shares your location. If you haven't tapped "I'm home safe" by your arrival time, everyone in the group sees an alert.</p>
       </div>
       <div id="tripActive" class="hidden">
         <p class="big" id="tripLine"></p>

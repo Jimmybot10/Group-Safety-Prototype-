@@ -59,7 +59,8 @@ let mode = 'join';
 let watchId = null, wakeLock = null, battery = null;
 let lastFix = null, lastSent = null;
 let map = null, markers = new Map(), fitted = false;
-let pollTimer = null, heartbeatTimer = null;
+let pollTimer = null, heartbeatTimer = null, findTimer = null;
+let shareState = 'off', resumeChecked = false;
 let alerted = new Set();
 const now = () => Date.now() + clockOffset;
 const urlCode = (new URLSearchParams(location.search).get('g') || '').toUpperCase().slice(0, 8);
@@ -132,7 +133,8 @@ function enterGroup() {
 }
 
 function leaveToWelcome(message) {
-  stopSharing();
+  stopSharing(false);
+  resumeChecked = false;
   clearInterval(pollTimer);
   creds = null; data = null; store(null);
   markers.forEach((m) => m.remove()); markers.clear(); fitted = false;
@@ -160,7 +162,7 @@ function statusOf(m) {
   if (m.trip_status === 'active') {
     const eta = new Date(m.trip_eta).getTime();
     if (t > eta) return { kind: 'bad', overdueMs: t - eta, seen, eta };
-    if (!seen || t - seen > STALE_MS) return { kind: 'warn', seen, eta };
+    if (m.sharing && (!seen || t - seen > STALE_MS)) return { kind: 'warn', seen, eta };
     return { kind: 'ok', seen, eta };
   }
   if (m.trip_status === 'home') return { kind: 'home', seen };
@@ -201,7 +203,8 @@ function render() {
     else if (s.kind === 'ok' || s.kind === 'warn') line = `${s.kind === 'warn' ? '<span class="status-warn">No recent update</span> · ' : ''}Heading to ${esc(m.trip_destination || 'their destination')} · due ${hhmm(new Date(s.eta))} (in ${mins(s.eta - t)} min)`;
     else if (s.kind === 'home') line = '<span class="status-home">Home safe</span>';
     else line = 'Not on a trip';
-    const seen = s.seen ? `Last seen ${ago(t - s.seen)}` : 'No location yet';
+    const seen = !m.sharing ? (s.seen ? `Location off · last seen ${ago(t - s.seen)}` : 'Location off')
+      : (s.seen ? `Sharing · last seen ${ago(t - s.seen)}` : 'Sharing · waiting for first location');
     const batt = m.battery_pct != null ? ` · battery ${m.battery_pct}%` : '';
     const dot = { ok: 'st-ok', bad: 'st-bad', warn: 'st-warn', home: 'st-home', none: 'st-none' }[s.kind];
     return `<li class="member"><span class="dot ${dot}" aria-hidden="true"></span><div><b>${esc(m.name)}${m.is_me ? ' (you)' : ''}</b><div>${line}</div><div class="muted">${seen}${batt}</div></div></li>`;
@@ -237,9 +240,13 @@ function render() {
     $('tripLine').textContent = `On your way${me.trip_destination ? ' to ' + me.trip_destination : ''} · due ${hhmm(eta)}`;
     const diff = eta.getTime() - t;
     $('tripCountdown').innerHTML = diff >= 0 ? `Arriving in about ${mins(diff)} min.` : `<span class="status-bad">You're ${mins(diff)} min past your arrival time. Your group has been alerted.</span>`;
-    if (watchId === null) $('keepOpenNote').textContent = 'Location sharing is off. Tap "+15 min" or start a new trip to share again.';
-  } else if (watchId !== null) {
-    stopSharing();
+    $('keepOpenNote').textContent = watchId === null
+      ? 'Your location is off, but the overdue alert still works. Turn on "Share my location" so the group can see where you are.'
+      : 'Keep this page open with the screen on. On this prototype, sharing pauses if your screen locks or you switch apps.';
+  }
+  if (!resumeChecked) {
+    resumeChecked = true;
+    if (me?.sharing && watchId === null) startSharing(); // page was reloaded while sharing
   }
 }
 
@@ -269,9 +276,9 @@ $('startTripBtn').onclick = async () => {
   if (!eta) return toast('Pick an expected arrival time.');
   const btn = $('startTripBtn'); btn.disabled = true;
   try {
-    await startSharing();
     await rpc('start_trip', { p_member: creds.member_id, p_secret: creds.secret, p_destination: $('tripDest').value.trim(), p_eta: eta.toISOString() });
-    toast('Trip started. Your group can see you.');
+    toast('Trip started.');
+    startSharing();
     await refresh();
   } catch (err) {
     toast(friendly(err));
@@ -285,7 +292,6 @@ async function extend(minutes) {
   if (!me) return;
   const base = Math.max(new Date(me.trip_eta).getTime(), now());
   try {
-    await startSharing();
     await rpc('start_trip', { p_member: creds.member_id, p_secret: creds.secret, p_destination: me.trip_destination || '', p_eta: new Date(base + minutes * 60000).toISOString() });
     toast(`Arrival time moved ${minutes} minutes later.`);
     await refresh();
@@ -298,7 +304,7 @@ $('homeBtn').onclick = async () => {
   try {
     if (lastFix) await sendPosition(true);
     await rpc('end_trip', { p_member: creds.member_id, p_secret: creds.secret });
-    stopSharing();
+    stopSharing(false);
     toast('Marked as home safe. Location sharing stopped.');
     setDefaultEta();
     await refresh();
@@ -306,37 +312,65 @@ $('homeBtn').onclick = async () => {
 };
 
 // ---------- location sharing ----------
-async function startSharing() {
-  if (watchId !== null) return;
-  if (!('geolocation' in navigator)) throw new Error('This browser cannot share location.');
-  try { battery = navigator.getBattery ? await navigator.getBattery() : null; } catch (e) { battery = null; }
-  await new Promise((resolve, reject) => {
-    let first = true;
-    watchId = navigator.geolocation.watchPosition((pos) => {
-      lastFix = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy };
-      sendPosition(false);
-      if (first) { first = false; resolve(); }
-    }, (err) => {
-      const msg = err.code === 1
-        ? 'Location is blocked. Allow location for this site in your browser settings, then try again.'
-        : 'Could not get your location yet. Move near a window or outdoors.';
-      if (first) { first = false; stopSharing(); reject(new Error(msg)); } else { toast(msg); }
-    }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
-  });
-  clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => sendPosition(true), HEARTBEAT_MS);
-  await keepAwake();
-  setChip(true);
+const BLOCKED_HELP = 'Location is blocked for this site. iPhone: Settings › Privacy & Security › Location Services › Safari Websites › While Using the App. Android: tap the icon left of the web address › Permissions › Location › Allow. Then reload this page. If you opened the link inside WhatsApp or another app, open it in Safari or Chrome instead.';
+
+function setShare(state, detail) {
+  shareState = state;
+  const chip = $('shareChip'), status = $('shareStatus'), btn = $('shareBtn');
+  const text = {
+    off: ['Not sharing', 'off', 'Off. Nobody in the group can see where you are.'],
+    finding: ['Finding you…', 'wait', 'Finding your location… Allow location if your phone asks.'],
+    slow: ['Finding you…', 'wait', 'Still looking for your location. Move near a window or outdoors, and check location is switched on.'],
+    on: ['Sharing location', 'on', 'On. The group can see where you are while this page is open.'],
+    blocked: ['Location blocked', 'off', BLOCKED_HELP],
+    error: ['Not sharing', 'off', detail || 'This browser cannot share location.'],
+  }[state];
+  chip.textContent = text[0];
+  chip.className = 'chip ' + text[1];
+  status.textContent = text[2];
+  status.classList.toggle('blocked', state === 'blocked');
+  const sharing = state === 'finding' || state === 'slow' || state === 'on';
+  btn.textContent = sharing ? 'Stop sharing' : 'Share my location';
+  btn.classList.toggle('stop', sharing);
+  btn.classList.toggle('primary', !sharing);
 }
 
-function stopSharing() {
+function startSharing() {
+  if (watchId !== null) return;
+  if (!('geolocation' in navigator)) { setShare('error'); return; }
+  setShare('finding');
+  try { navigator.getBattery?.().then((b) => { battery = b; }).catch(() => {}); } catch (e) { /* not supported */ }
+  watchId = navigator.geolocation.watchPosition((pos) => {
+    lastFix = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy };
+    if (shareState !== 'on') setShare('on');
+    sendPosition(false);
+  }, (err) => {
+    if (err.code === 1) { stopSharing(true); setShare('blocked'); }
+    else if (shareState !== 'on') setShare('slow');
+  }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+  clearTimeout(findTimer);
+  findTimer = setTimeout(() => { if (shareState === 'finding') setShare('slow'); }, 20000);
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(() => sendPosition(true), HEARTBEAT_MS);
+  keepAwake();
+}
+
+function stopSharing(tellGroup = true) {
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
   watchId = null;
+  lastFix = null; lastSent = null;
   clearInterval(heartbeatTimer);
+  clearTimeout(findTimer);
   try { wakeLock?.release(); } catch (e) { /* already released */ }
   wakeLock = null;
-  setChip(false);
+  setShare('off');
+  if (tellGroup && creds) rpc('set_sharing', { p_member: creds.member_id, p_secret: creds.secret, p_on: false }).then(refresh).catch(() => {});
 }
+
+$('shareBtn').onclick = () => {
+  if (watchId !== null) { stopSharing(true); toast('Location sharing stopped.'); }
+  else startSharing();
+};
 
 async function sendPosition(force) {
   if (!lastFix || !creds) return;
@@ -363,12 +397,6 @@ async function keepAwake() {
       $('keepOpenNote').textContent = 'Your screen will stay on while this page is open. Sharing pauses if you switch apps or lock the phone.';
     }
   } catch (e) { /* wake lock not allowed; the note already asks to keep the screen on */ }
-}
-
-function setChip(on) {
-  const c = $('shareChip');
-  c.textContent = on ? 'Sharing location' : 'Not sharing';
-  c.className = 'chip ' + (on ? 'on' : 'off');
 }
 
 document.addEventListener('visibilitychange', () => {

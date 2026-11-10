@@ -1,4 +1,4 @@
--- Group Safety prototype v0.1: database set-up
+-- Group Safety prototype v0.2: database set-up
 -- Run once in Supabase: SQL Editor > New query > paste all of this > Run.
 --
 -- Design:
@@ -31,11 +31,13 @@ create table if not exists public.members (
   trip_destination text check (char_length(trip_destination) <= 60),
   trip_eta timestamptz,
   trip_started_at timestamptz,
+  sharing boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists members_group_idx on public.members (group_id);
+alter table public.members add column if not exists sharing boolean not null default false;
 
 alter table public.groups enable row level security;
 alter table public.members enable row level security;
@@ -134,7 +136,7 @@ begin
   update public.members
      set lat = p_lat, lng = p_lng, accuracy_m = p_accuracy,
          battery_pct = case when p_battery between 0 and 100 then p_battery else null end,
-         last_seen_at = now(), updated_at = now()
+         last_seen_at = now(), sharing = true, updated_at = now()
    where id = p_member and secret = p_secret
    returning group_id into v_group;
   if v_group is null then
@@ -180,7 +182,29 @@ set search_path = ''
 as $$
 begin
   update public.members
-     set trip_status = 'home', updated_at = now()
+     set trip_status = 'home', sharing = false, lat = null, lng = null, accuracy_m = null, updated_at = now()
+   where id = p_member and secret = p_secret;
+  if not found then
+    raise exception 'not_member';
+  end if;
+end;
+$$;
+
+-- Turn the caller's location sharing on or off (shown to the group).
+create or replace function public.set_sharing(p_member uuid, p_secret uuid, p_on boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.members
+     set sharing = coalesce(p_on, false),
+         -- switching off on purpose deletes the stored position
+         lat = case when coalesce(p_on, false) then lat end,
+         lng = case when coalesce(p_on, false) then lng end,
+         accuracy_m = case when coalesce(p_on, false) then accuracy_m end,
+         updated_at = now()
    where id = p_member and secret = p_secret;
   if not found then
     raise exception 'not_member';
@@ -233,7 +257,8 @@ begin
                'trip_status', m.trip_status,
                'trip_destination', m.trip_destination,
                'trip_eta', m.trip_eta,
-               'trip_started_at', m.trip_started_at)
+               'trip_started_at', m.trip_started_at,
+               'sharing', m.sharing)
              order by m.created_at)
         from public.members m
        where m.group_id = v_me.group_id), '[]'::json));
@@ -247,6 +272,7 @@ revoke execute on function public.update_location(uuid, uuid, double precision, 
 revoke execute on function public.start_trip(uuid, uuid, text, timestamptz) from public, authenticated;
 revoke execute on function public.end_trip(uuid, uuid) from public, authenticated;
 revoke execute on function public.leave_group(uuid, uuid) from public, authenticated;
+revoke execute on function public.set_sharing(uuid, uuid, boolean) from public, authenticated;
 revoke execute on function public.get_group(uuid, uuid) from public, authenticated;
 grant execute on function public.create_group(text, text) to anon;
 grant execute on function public.join_group(text, text) to anon;
@@ -254,4 +280,5 @@ grant execute on function public.update_location(uuid, uuid, double precision, d
 grant execute on function public.start_trip(uuid, uuid, text, timestamptz) to anon;
 grant execute on function public.end_trip(uuid, uuid) to anon;
 grant execute on function public.leave_group(uuid, uuid) to anon;
+grant execute on function public.set_sharing(uuid, uuid, boolean) to anon;
 grant execute on function public.get_group(uuid, uuid) to anon;
