@@ -1,4 +1,4 @@
-# Group Safety prototype (v0.1)
+# Group Safety prototype (v0.3)
 
 A web page that lets a small group share live locations during a trip and alerts everyone if someone hasn't checked in as home safe by their expected arrival time. Test prototype for validation only: adults only, not an emergency service.
 
@@ -6,6 +6,9 @@ A web page that lets a small group share live locations during a trip and alerts
 - Create a group or join one with an 8-character code or invite link
 - Start a trip with a destination and expected arrival time; location is shared while the page is open
 - Live group map and list with "last seen", battery (where the browser allows) and trip status
+- "Share my location" on/off switch, with the time each person turned sharing on or off
+- After someone stops sharing, the group sees their last location (street and area, time, and an "Open in Google Maps" link). "I'm home safe" and "Leave group" delete it
+- Street names come from OpenStreetMap's free lookup (Nominatim), at most one lookup a second
 - Overdue alert for everyone in the group; "+15 min" / "+30 min" to extend; "I'm home safe" stops sharing
 - Leave group deletes your data; anything not updated for 24 hours is deleted automatically
 

@@ -49,6 +49,10 @@ button:disabled{opacity:.55;cursor:default}
 .chip.off{background:#eceff1;color:var(--muted)}
 .chip.wait{background:var(--warn-soft);color:var(--warn)}
 #shareStatus.blocked{color:var(--bad);font-weight:600}
+.loc-on{color:var(--ok);font-weight:600}
+.loc-off{color:var(--warn);font-weight:600}
+.last{font-size:14px;color:var(--ink);margin-top:2px}
+.last a{color:var(--brand);font-weight:600}
 #shareBtn.stop{background:#fff;color:var(--bad);border-color:#efc4bf}
 .members{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .member{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fff}
@@ -93,7 +97,7 @@ footer{font-size:13px;color:var(--muted);text-align:center;padding:8px 0 24px}
         <input id="groupName" type="text" maxlength="40" placeholder="e.g. Sunday 5-a-side">
       </div>
       <label class="check"><input id="consent" type="checkbox">
-        <span>I'm 18 or over. While I'm on a trip with this page open, my location is shared with this group only. I can stop at any time. This is a test prototype and data is deleted after 24 hours.</span></label>
+        <span>I'm 18 or over. While I share, my location is visible to this group only. If I stop sharing, the group still sees where and when I was last located until I tap "I'm home safe" or leave. This is a test prototype and data is deleted after 24 hours.</span></label>
       <div class="row" style="margin-top:14px"><button class="primary" id="welcomeBtn" type="submit">Join group</button></div>
       <p class="muted" id="welcomeNote" style="margin-top:10px"></p>
     </form>

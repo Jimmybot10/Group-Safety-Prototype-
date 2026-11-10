@@ -1,4 +1,4 @@
--- Group Safety prototype v0.2: database set-up
+-- Group Safety prototype v0.3: database set-up
 -- Run once in Supabase: SQL Editor > New query > paste all of this > Run.
 --
 -- Design:
@@ -32,12 +32,14 @@ create table if not exists public.members (
   trip_eta timestamptz,
   trip_started_at timestamptz,
   sharing boolean not null default false,
+  sharing_changed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists members_group_idx on public.members (group_id);
 alter table public.members add column if not exists sharing boolean not null default false;
+alter table public.members add column if not exists sharing_changed_at timestamptz;
 
 alter table public.groups enable row level security;
 alter table public.members enable row level security;
@@ -136,6 +138,7 @@ begin
   update public.members
      set lat = p_lat, lng = p_lng, accuracy_m = p_accuracy,
          battery_pct = case when p_battery between 0 and 100 then p_battery else null end,
+         sharing_changed_at = case when sharing then sharing_changed_at else now() end,
          last_seen_at = now(), sharing = true, updated_at = now()
    where id = p_member and secret = p_secret
    returning group_id into v_group;
@@ -182,7 +185,9 @@ set search_path = ''
 as $$
 begin
   update public.members
-     set trip_status = 'home', sharing = false, lat = null, lng = null, accuracy_m = null, updated_at = now()
+     set trip_status = 'home',
+         sharing_changed_at = case when sharing then now() else sharing_changed_at end,
+         sharing = false, lat = null, lng = null, accuracy_m = null, updated_at = now()
    where id = p_member and secret = p_secret;
   if not found then
     raise exception 'not_member';
@@ -190,7 +195,7 @@ begin
 end;
 $$;
 
--- Turn the caller's location sharing on or off (shown to the group).
+-- Turn the caller's location sharing on or off. The group sees when it changed and the last location.
 create or replace function public.set_sharing(p_member uuid, p_secret uuid, p_on boolean)
 returns void
 language plpgsql
@@ -199,11 +204,9 @@ set search_path = ''
 as $$
 begin
   update public.members
-     set sharing = coalesce(p_on, false),
-         -- switching off on purpose deletes the stored position
-         lat = case when coalesce(p_on, false) then lat end,
-         lng = case when coalesce(p_on, false) then lng end,
-         accuracy_m = case when coalesce(p_on, false) then accuracy_m end,
+     set sharing_changed_at = case when sharing is distinct from coalesce(p_on, false) then now() else sharing_changed_at end,
+         -- the last location is kept so the group can see where and when the person was last located
+         sharing = coalesce(p_on, false),
          updated_at = now()
    where id = p_member and secret = p_secret;
   if not found then
@@ -258,7 +261,8 @@ begin
                'trip_destination', m.trip_destination,
                'trip_eta', m.trip_eta,
                'trip_started_at', m.trip_started_at,
-               'sharing', m.sharing)
+               'sharing', m.sharing,
+               'sharing_changed_at', m.sharing_changed_at)
              order by m.created_at)
         from public.members m
        where m.group_id = v_me.group_id), '[]'::json));

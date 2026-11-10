@@ -65,6 +65,40 @@ let alerted = new Set();
 const now = () => Date.now() + clockOffset;
 const urlCode = (new URLSearchParams(location.search).get('g') || '').toUpperCase().slice(0, 8);
 
+// ---------- last-location place names ----------
+// Turns coordinates into a street and area, e.g. "Seven Sisters Road, Finsbury Park (N4)".
+// Uses OpenStreetMap's free lookup: at most one request a second, and only when someone has
+// moved more than 100 m since their last lookup.
+const places = new Map(); // member id -> { lat, lng, label }
+let placeQueue = Promise.resolve(), lastPlaceAt = 0;
+function formatPlace(j) {
+  const a = j?.address || {};
+  const street = [a.house_number, a.road || a.pedestrian || a.footway || a.path || a.square].filter(Boolean).join(' ') || a.amenity || j?.name || '';
+  const area = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.village || a.town || a.city || '';
+  const pc = a.postcode ? a.postcode.split(' ')[0] : '';
+  return [street, area].filter(Boolean).join(', ') + (pc ? ` (${pc})` : '');
+}
+function placeFor(m) {
+  const known = places.get(m.id);
+  if (known && metres(known, m) < 100) return known.label; // '' means pending or unknown
+  places.set(m.id, { lat: m.lat, lng: m.lng, label: '' });
+  placeQueue = placeQueue.then(async () => {
+    const wait = Math.max(0, 1100 - (Date.now() - lastPlaceAt));
+    await new Promise((r) => setTimeout(r, wait));
+    lastPlaceAt = Date.now();
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=en-GB&lat=${m.lat}&lon=${m.lng}`);
+      if (!r.ok) throw new Error('lookup failed');
+      places.set(m.id, { lat: m.lat, lng: m.lng, label: formatPlace(await r.json()) });
+      if (data) render();
+    } catch (e) { /* keep showing coordinates */ }
+  });
+  return '';
+}
+const mapsLink = (m) => `https://www.google.com/maps/search/?api=1&query=${m.lat},${m.lng}`;
+const coords = (m) => `${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`;
+function whenText(iso, t) { const d = new Date(iso); return `${hhmm(d)} (${ago(t - d.getTime())})`; }
+
 async function rpc(fn, args) {
   const { data: d, error } = await sb.rpc(fn, args);
   if (error) throw error;
@@ -203,11 +237,18 @@ function render() {
     else if (s.kind === 'ok' || s.kind === 'warn') line = `${s.kind === 'warn' ? '<span class="status-warn">No recent update</span> · ' : ''}Heading to ${esc(m.trip_destination || 'their destination')} · due ${hhmm(new Date(s.eta))} (in ${mins(s.eta - t)} min)`;
     else if (s.kind === 'home') line = '<span class="status-home">Home safe</span>';
     else line = 'Not on a trip';
-    const seen = !m.sharing ? (s.seen ? `Location off · last seen ${ago(t - s.seen)}` : 'Location off')
-      : (s.seen ? `Sharing · last seen ${ago(t - s.seen)}` : 'Sharing · waiting for first location');
     const batt = m.battery_pct != null ? ` · battery ${m.battery_pct}%` : '';
+    let loc;
+    if (m.sharing) loc = `<span class="loc-on">Sharing${m.sharing_changed_at ? ' since ' + hhmm(new Date(m.sharing_changed_at)) : ''}</span>${s.seen ? ' · updated ' + ago(t - s.seen) : ' · waiting for first location'}${batt}`;
+    else if (m.sharing_changed_at) loc = `<span class="loc-off">Location turned off at ${whenText(m.sharing_changed_at, t)}</span>`;
+    else loc = 'Has not shared location yet';
+    let last = '';
+    if (m.lat != null && m.lng != null) {
+      const place = placeFor(m);
+      last = `<div class="last">Last location: ${esc(place || coords(m))}${s.seen ? ' at ' + hhmm(new Date(s.seen)) : ''} · <a href="${mapsLink(m)}" target="_blank" rel="noopener">Open in Google Maps</a></div>`;
+    }
     const dot = { ok: 'st-ok', bad: 'st-bad', warn: 'st-warn', home: 'st-home', none: 'st-none' }[s.kind];
-    return `<li class="member"><span class="dot ${dot}" aria-hidden="true"></span><div><b>${esc(m.name)}${m.is_me ? ' (you)' : ''}</b><div>${line}</div><div class="muted">${seen}${batt}</div></div></li>`;
+    return `<li class="member"><span class="dot ${dot}" aria-hidden="true"></span><div><b>${esc(m.name)}${m.is_me ? ' (you)' : ''}</b><div>${line}</div><div class="muted">${loc}</div>${last}</div></li>`;
   }).join('');
   $('updatedNote').textContent = 'Updated ' + hhmm(new Date()) + '. Refreshes every 10 seconds while this page is open.';
 
@@ -218,7 +259,8 @@ function render() {
     if (m.lat == null || m.lng == null) return;
     seenIds.add(m.id);
     const s = statusOf(m);
-    const style = { radius: m.is_me ? 10 : 9, color: '#fff', weight: 3, fillColor: colours[s.kind], fillOpacity: 1 };
+    const kind = !m.sharing && s.kind !== 'bad' ? 'none' : s.kind;
+    const style = { radius: m.is_me ? 10 : 9, color: '#fff', weight: 3, fillColor: colours[kind], fillOpacity: m.sharing ? 1 : 0.7 };
     let mk = markers.get(m.id);
     if (!mk) {
       mk = L.circleMarker([m.lat, m.lng], style).addTo(map);
@@ -226,7 +268,9 @@ function render() {
       markers.set(m.id, mk);
     }
     mk.setLatLng([m.lat, m.lng]).setStyle(style);
-    mk.setTooltipContent(esc(m.is_me ? 'You' : m.name));
+    const who = esc(m.is_me ? 'You' : m.name);
+    const stale = !m.sharing || s.kind === 'warn' || s.kind === 'bad';
+    mk.setTooltipContent(stale && s.seen ? `${who} · last ${hhmm(new Date(s.seen))}` : who);
   });
   markers.forEach((mk, id) => { if (!seenIds.has(id)) { mk.remove(); markers.delete(id); } });
   if (!fitted && markers.size) { fitAll(); fitted = true; }
@@ -243,6 +287,11 @@ function render() {
     $('keepOpenNote').textContent = watchId === null
       ? 'Your location is off, but the overdue alert still works. Turn on "Share my location" so the group can see where you are.'
       : 'Keep this page open with the screen on. On this prototype, sharing pauses if your screen locks or you switch apps.';
+  }
+  if (me && shareState === 'off') {
+    $('shareStatus').textContent = me.sharing_changed_at && !me.sharing
+      ? `Off since ${hhmm(new Date(me.sharing_changed_at))}.${me.lat != null ? ' The group can still see where you last were.' : ''}`
+      : 'Off. Nobody in the group can see where you are.';
   }
   if (!resumeChecked) {
     resumeChecked = true;
@@ -368,7 +417,7 @@ function stopSharing(tellGroup = true) {
 }
 
 $('shareBtn').onclick = () => {
-  if (watchId !== null) { stopSharing(true); toast('Location sharing stopped.'); }
+  if (watchId !== null) { stopSharing(true); toast('Location sharing stopped. The group can still see where and when you were last located.'); }
   else startSharing();
 };
 
