@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b5e69">
+<link rel="icon" href="data:,">
+<title>Group Safety (prototype)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{
+  --bg:#f3f5f6; --card:#ffffff; --ink:#14191f; --muted:#5a6470; --line:#dce1e5;
+  --brand:#0b5e69; --brand-soft:#e1f0f2;
+  --bad:#b42318; --bad-soft:#fdecea; --warn:#9a5b00; --warn-soft:#fdf3dc; --ok:#1d7a3e; --ok-soft:#e5f4ea;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+main{max-width:640px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+h1{font-size:22px;margin:0}
+h2{font-size:17px;margin:0 0 8px}
+p{margin:0 0 8px}
+.muted{color:var(--muted);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.hidden{display:none !important}
+label{display:block;font-weight:600;font-size:14px;margin:10px 0 4px}
+input[type=text],input[type=time]{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+input:focus-visible,button:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.check{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:14px;margin-top:14px}
+.check input{width:20px;height:20px;margin-top:2px;flex:none}
+button{font:inherit;font-weight:600;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);padding:12px 16px;min-height:48px;cursor:pointer}
+button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+button.good{background:var(--ok);border-color:var(--ok);color:#fff}
+button.danger{color:var(--bad);border-color:#efc4bf}
+button:disabled{opacity:.55;cursor:default}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row > *{flex:1 1 auto}
+.tabs{display:flex;gap:6px;margin-bottom:6px}
+.tabs button{flex:1;min-height:44px}
+.tabs button[aria-selected=true]{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+.head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.code{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:1px;background:var(--brand-soft);color:var(--brand);padding:2px 8px;border-radius:6px;font-weight:700}
+#map{height:46vh;min-height:260px;border-radius:14px;border:1px solid var(--line);z-index:0}
+.banner{border-radius:12px;padding:12px 14px;font-weight:600}
+.banner.bad{background:var(--bad-soft);color:var(--bad);border:1px solid #f1c2bc}
+.banner.warn{background:var(--warn-soft);color:var(--warn);border:1px solid #f0d9a8}
+.chip{display:inline-block;font-size:13px;font-weight:700;padding:3px 10px;border-radius:999px}
+.chip.on{background:var(--ok-soft);color:var(--ok)}
+.chip.off{background:#eceff1;color:var(--muted)}
+.members{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.member{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.dot{width:14px;height:14px;border-radius:50%;margin-top:4px;flex:none;border:2px solid #fff;box-shadow:0 0 0 1px var(--line)}
+.member b{display:block}
+.st-ok{background:var(--brand)} .st-bad{background:var(--bad)} .st-warn{background:#d98a00} .st-home{background:var(--ok)} .st-none{background:#9aa3ab}
+.status-bad{color:var(--bad);font-weight:600} .status-warn{color:var(--warn);font-weight:600} .status-home{color:var(--ok);font-weight:600}
+.big{font-size:20px;font-weight:700}
+.toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#14191f;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;max-width:90vw;z-index:1000}
+.invite{display:flex;gap:8px;margin-top:8px}
+.invite input{flex:1;font-size:13px}
+footer{font-size:13px;color:var(--muted);text-align:center;padding:8px 0 24px}
+.leaflet-tooltip.name{font-weight:700;font-size:12px;padding:2px 6px}
+</style>
+</head>
+<body>
+<main>
+  <header class="head">
+    <h1>Group Safety</h1>
+    <span class="chip off" id="shareChip">Not sharing</span>
+  </header>
+
+  <section id="setupNeeded" class="card hidden">
+    <h2>Almost ready</h2>
+    <p>This prototype isn't connected to its database yet. Add the Supabase project URL and publishable key to <code>config.js</code>.</p>
+  </section>
+
+  <section id="welcome" class="card hidden">
+    <div class="tabs" role="tablist">
+      <button id="tabJoin" role="tab" aria-selected="true" type="button">Join a group</button>
+      <button id="tabCreate" role="tab" aria-selected="false" type="button">Start a group</button>
+    </div>
+    <form id="welcomeForm" novalidate>
+      <label for="displayName">Your first name</label>
+      <input id="displayName" type="text" maxlength="30" autocomplete="given-name" required>
+      <div id="joinFields">
+        <label for="groupCode">Group code</label>
+        <input id="groupCode" type="text" maxlength="8" autocapitalize="characters" autocomplete="off" placeholder="e.g. 9594B324">
+      </div>
+      <div id="createFields" class="hidden">
+        <label for="groupName">Group name</label>
+        <input id="groupName" type="text" maxlength="40" placeholder="e.g. Sunday 5-a-side">
+      </div>
+      <label class="check"><input id="consent" type="checkbox">
+        <span>I'm 18 or over. While I'm on a trip with this page open, my location is shared with this group only. I can stop at any time. This is a test prototype and data is deleted after 24 hours.</span></label>
+      <div class="row" style="margin-top:14px"><button class="primary" id="welcomeBtn" type="submit">Join group</button></div>
+      <p class="muted" id="welcomeNote" style="margin-top:10px"></p>
+    </form>
+  </section>
+
+  <section id="groupView" class="hidden" style="display:flex;flex-direction:column;gap:14px">
+    <div class="card">
+      <div class="head">
+        <div><h2 id="groupName2" style="margin:0"></h2><span class="muted">Code <span class="code" id="groupCode2"></span></span></div>
+        <button id="inviteBtn" type="button">Invite</button>
+      </div>
+      <div class="invite hidden" id="inviteBox">
+        <input type="text" id="inviteLink" readonly aria-label="Invite link">
+        <button type="button" id="copyBtn">Copy</button>
+      </div>
+    </div>
+
+    <div id="banners" style="display:flex;flex-direction:column;gap:8px" aria-live="assertive"></div>
+
+    <div id="map" role="region" aria-label="Group map"></div>
+
+    <div class="card" id="tripCard">
+      <div id="tripIdle">
+        <h2>Start a trip</h2>
+        <label for="tripDest">Where are you going?</label>
+        <input id="tripDest" type="text" maxlength="60" placeholder="e.g. Home">
+        <label for="tripEta">Expected arrival</label>
+        <input id="tripEta" type="time">
+        <div class="row" style="margin-top:14px"><button class="primary" id="startTripBtn" type="button">Start trip and share location</button></div>
+        <p class="muted" style="margin-top:10px">If you haven't tapped "I'm home" by your arrival time, everyone in the group sees an alert.</p>
+      </div>
+      <div id="tripActive" class="hidden">
+        <p class="big" id="tripLine"></p>
+        <p id="tripCountdown"></p>
+        <div class="row" style="margin-top:6px">
+          <button class="good" id="homeBtn" type="button">I'm home safe</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="plus15" type="button">+15 min</button>
+          <button id="plus30" type="button">+30 min</button>
+        </div>
+        <p class="muted" style="margin-top:10px" id="keepOpenNote">Keep this page open with the screen on. On this prototype, sharing pauses if your screen locks or you switch apps.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Group</h2>
+      <ul class="members" id="members"></ul>
+      <p class="muted" style="margin-top:10px" id="updatedNote"></p>
+    </div>
+
+    <div class="row">
+      <button id="fitBtn" type="button">Show everyone</button>
+      <button class="danger" id="leaveBtn" type="button">Leave group and delete my data</button>
+    </div>
+  </section>
+
+  <footer>Test prototype. Not an emergency service: in an emergency, call 999.<br>Map data &copy; OpenStreetMap contributors.</footer>
+</main>
+<div class="toast hidden" id="toast" role="status"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
